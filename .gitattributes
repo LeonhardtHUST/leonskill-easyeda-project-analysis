@@ -1,2 +1,19 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# 文本文件一律以 LF 存入仓库，检出时也保持 LF。
+# 本仓库只有 Python / Markdown / JSON，没有需要 CRLF 的批处理脚本。
+* text=auto eol=lf
+
+*.py    text eol=lf
+*.md    text eol=lf
+*.json  text eol=lf
+*.txt   text eol=lf
+.gitignore    text eol=lf
+.gitattributes text eol=lf
+LICENSE text eol=lf
+
+# 二进制，不做换行符处理
+*.png   binary
+*.jpg   binary
+*.webp  binary
+*.zip   binary
+*.epro2 binary
+*.epru  binary
