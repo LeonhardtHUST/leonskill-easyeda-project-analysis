@@ -5,7 +5,7 @@ IR 是解析结果的中间表示，字段：
   project / page{uuid,name,docType} / components[] / wires[] / nets[] / warnings[]
 
 连通性判定只认三种几何接触：
-  1. 点与点重合（容差 0.01）
+  1. 点与点重合（容差 0.02，即 TOL）
   2. 线段端点与另一线段端点重合
   3. 点严格落在线段内部（EDA 的 junction 语义）
 
@@ -64,6 +64,82 @@ def _on_segment(px, py, x1, y1, x2, y2, eps=TOL):
     return 0.001 < t < 0.999
 
 
+class _SegmentGrid(object):
+    """线段的空间索引：按包围盒登记进固定尺寸网格桶。
+
+    只用来**筛掉**不可能接触的线段，接触判定仍然交给 `_on_segment`，
+    所以连通性语义与逐条遍历完全一致。
+
+    - 线段跨格时登记它覆盖的所有格子，不只登记质心格；
+    - 引脚查本格 + 邻格（3×3）：格边长 ≥ 10×TOL，落在格边界 tol 内的引脚
+      最多只差一格，查邻格才不会漏；
+    - 超长线段跨格数太多（一条线登记上万个桶反而更慢），降级到 8 倍粗网格，
+      粗网格仍超限则放进 loose 线性表。
+    """
+
+    MAX_CELLS = 64
+
+    def __init__(self, segments, tol):
+        self.segments = segments
+        self.buckets = {}
+        self.coarse = {}
+        self.loose = []
+        if not segments:
+            self.cell = max(tol * 10.0, 1.0)
+            self.coarse_cell = self.cell * 8.0
+            return
+        xs, ys = [], []
+        for x1, y1, x2, y2 in segments:
+            xs.extend((x1, x2))
+            ys.extend((y1, y2))
+        span = max(max(xs) - min(xs), max(ys) - min(ys), 0.0)
+        # 自适应边长：让网格大约是 sqrt(线段数) × sqrt(线段数) 的规模
+        self.cell = max(tol * 10.0, span / max(1.0, math.sqrt(len(segments))))
+        self.coarse_cell = self.cell * 8.0
+        for index, seg in enumerate(segments):
+            if self._insert(index, seg, self.cell, self.buckets):
+                continue
+            if self._insert(index, seg, self.coarse_cell, self.coarse):
+                continue
+            self.loose.append(index)
+
+    def _cells(self, seg, cell):
+        x1, y1, x2, y2 = seg
+        i0 = int(math.floor(min(x1, x2) / cell))
+        i1 = int(math.floor(max(x1, x2) / cell))
+        j0 = int(math.floor(min(y1, y2) / cell))
+        j1 = int(math.floor(max(y1, y2) / cell))
+        return i0, i1, j0, j1
+
+    def _insert(self, index, seg, cell, buckets):
+        """登记成功返回 True；跨格数超过上限则放弃（交给更粗的层）。"""
+        i0, i1, j0, j1 = self._cells(seg, cell)
+        if (i1 - i0 + 1) * (j1 - j0 + 1) > self.MAX_CELLS:
+            return False
+        for i in range(i0, i1 + 1):
+            for j in range(j0, j1 + 1):
+                buckets.setdefault((i, j), []).append(index)
+        return True
+
+    def query(self, px, py):
+        """返回可能与 (px, py) 接触的线段下标（含少量假阳性，由调用方精确判定）。"""
+        if not self.segments:
+            return ()
+        out = list(self.loose)
+        ci = int(math.floor(px / self.cell))
+        cj = int(math.floor(py / self.cell))
+        for di in (-1, 0, 1):
+            for dj in (-1, 0, 1):
+                out.extend(self.buckets.get((ci + di, cj + dj), ()))
+        if self.coarse:
+            ii = int(math.floor(px / self.coarse_cell))
+            jj = int(math.floor(py / self.coarse_cell))
+            for di in (-1, 0, 1):
+                for dj in (-1, 0, 1):
+                    out.extend(self.coarse.get((ii + di, jj + dj), ()))
+        return out
+
+
 def page_to_ir(doc, symbols, devices, project=None, page_name=None):
     by_type, meta = epru.doc_elements(doc)
     attrs_by_parent = epru.attr_map(by_type)
@@ -115,8 +191,17 @@ def page_to_ir(doc, symbols, devices, project=None, page_name=None):
             "pins": [],
             "attrs": {k: v for k, v in merged.items() if v is not None},
         }
+        # 记录里的摆放字段叫 isMirror / rotation / x / y，transform_pin 按文档约定
+        # 读 mirror，这里做一次显式归一。此前直接把原始记录传进去，
+        # 镜像分支因为读不到 mirror 从未生效（rotation=90+镜像的件会被当成没镜像）。
+        placement = {
+            "x": comp.get("x"),
+            "y": comp.get("y"),
+            "rotation": comp.get("rotation"),
+            "mirror": comp.get("isMirror"),
+        }
         for _pid, pin in (symbol.get("pins") or {}).items():
-            ax, ay = library.transform_pin(pin["x"], pin["y"], comp)
+            ax, ay = library.transform_pin(pin["x"], pin["y"], placement)
             item["pins"].append({
                 "number": pin.get("number"),
                 "name": pin.get("name"),
@@ -171,9 +256,15 @@ def build_nets(ir, tol=TOL):
         uf.union(a, b)
         segments.append((x1, y1, x2, y2))
 
+    grid = _SegmentGrid(segments, tol)
     for key, _comp, pin in pins:
         px, py = pin["x"], pin["y"]
-        for x1, y1, x2, y2 in segments:
+        seen = set()
+        for index in grid.query(px, py):
+            if index in seen:
+                continue
+            seen.add(index)
+            x1, y1, x2, y2 = segments[index]
             if min(x1, x2) - tol <= px <= max(x1, x2) + tol and \
                min(y1, y2) - tol <= py <= max(y1, y2) + tol:
                 if _on_segment(px, py, x1, y1, x2, y2):
@@ -217,18 +308,22 @@ def build_nets(ir, tol=TOL):
         root_names.setdefault(uf.find(key), set()).update(ns)
 
     groups = uf.groups()
+    # 一次遍历把引脚按根节点分好组：原来是 groups × pins 的双重循环，
+    # 大工程下是 O(网络数×引脚数)。分组顺序沿用 groups 的顺序，
+    # 未命名网络的 N$n 编号因此保持不变。
+    members_by_root = {}
+    for key, comp, pin in pins:
+        members_by_root.setdefault(uf.find(key), []).append({
+            "designator": comp.get("designator"),
+            "pinNumber": pin.get("number"),
+            "pinName": pin.get("name"),
+            "componentType": comp.get("componentType"),
+        })
+
     pin_net = {}
     nets = []
-    for root, keys in groups.items():
-        members = []
-        for key, comp, pin in pins:
-            if uf.find(key) == root:
-                members.append({
-                    "designator": comp.get("designator"),
-                    "pinNumber": pin.get("number"),
-                    "pinName": pin.get("name"),
-                    "componentType": comp.get("componentType"),
-                })
+    for root in groups:
+        members = members_by_root.get(root) or []
         if not members:
             continue
         ns = sorted(root_names.get(root, set()))

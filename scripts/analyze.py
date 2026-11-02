@@ -118,6 +118,9 @@ def collect(project_path, page_key=None):
         "pages": page_list,
         "pages_analyzed": [ir["page"].get("label") or ir["page"]["name"]
                            for ir in pages_ir],
+        # 按 uuid 记录真正解析过的页：同名页会有 P1 / P1#2 两个 label，
+        # 用 label（或 name）比对会把同名页判错，uuid 才是唯一键。
+        "pages_analyzed_uuids": [ir["page"]["uuid"] for ir in pages_ir],
     }
 
     artifacts = {
@@ -148,13 +151,25 @@ def check_consistency(artifacts):
     dup = duplicate_designators(rows)
     multi_page = artifacts.get("multi_page_designators") or {}
     pcb_map = {}
+    duplicate_pin_keys = set()
+    duplicate_pin_conflicts = set()
     for r in rows:
         key = (r["designator"], r["pinNumber"])
         if key[1] is None:
             continue
         if r["designator"] in dup or r["designator"] in multi_page:
             continue
-        pcb_map.setdefault(key, r.get("net") or "")
+        net = r.get("net") or ""
+        if key in pcb_map:
+            # 同一 (位号, 引脚号) 出现多行：不再静默留首行。
+            duplicate_pin_keys.add(key)
+            if pcb_map[key] != net:
+                duplicate_pin_conflicts.add(key)
+            continue
+        pcb_map[key] = net
+    # 网络互相矛盾的键连"信哪条"都定不了，只能排除比对并报出来
+    for key in duplicate_pin_conflicts:
+        pcb_map.pop(key, None)
 
     mismatches = []
     compared = 0
@@ -176,13 +191,19 @@ def check_consistency(artifacts):
              "skipped_unnamed": skipped,
              "ambiguous": len(artifacts.get("ambiguous") or {}),
              "duplicate_designators": len(dup),
+             "duplicate_pin_keys": len(duplicate_pin_keys),
+             "duplicate_pin_conflicts": len(duplicate_pin_conflicts),
              "multi_page": len(multi_page),
              "pcb_rows": len(rows), "schematic_nets": len(pin_net)}
     return mismatches, stats
 
 
 def find_floating(pages_ir, limit=40):
-    """只连了一个实体引脚的命名网络，通常是悬空或绘图残留。"""
+    """只连了一个实体引脚的命名网络，通常是悬空或绘图残留。
+
+    返回 (列表, 是否被截断)。截断时报告里必须注明"仅列前 N 条"，
+    否则会被当成全部结果。
+    """
     out = []
     for ir in pages_ir:
         for net in ir.get("nets", []):
@@ -193,11 +214,11 @@ def find_floating(pages_ir, limit=40):
                 out.append({"net": net["name"], "page": ir["page"]["name"],
                             "pins": real})
             if len(out) >= limit:
-                return out
-    return out
+                return out, True
+    return out, False
 
 
-def render_report(artifacts, mismatches, stats, floating):
+def render_report(artifacts, mismatches, stats, floating, floating_truncated=False):
     meta = artifacts["meta"]
     geo = artifacts["geometry"]
     pages_ir = artifacts["pages_ir"]
@@ -205,6 +226,10 @@ def render_report(artifacts, mismatches, stats, floating):
     doc_counts = {}
     for d in meta["documents"]:
         doc_counts[d["docType"]] = doc_counts.get(d["docType"], 0) + 1
+
+    # 未解析的页按 uuid 求差集：页名会重名，label 又会加 #2 后缀，都不可靠
+    analyzed_uuids = set(meta.get("pages_analyzed_uuids") or [])
+    pending_pages = [p for p in meta["pages"] if p["uuid"] not in analyzed_uuids]
 
     lines = []
     add = lines.append
@@ -225,10 +250,9 @@ def render_report(artifacts, mismatches, stats, floating):
                 % (ir["page"].get("label") or ir["page"]["name"],
                    len(ir["components"]), len(parts),
                    len(ir["wires"]), len(ir["nets"])))
-        if len(meta["pages"]) > len(pages_ir):
+        if pending_pages:
             add("- **未解析的页**：%s"
-                % "、".join(p["name"] for p in meta["pages"]
-                            if p["name"] not in meta["pages_analyzed"]))
+                % "、".join(p["name"] + "（%s）" % p["uuid"] for p in pending_pages))
     else:
         add("- 原理图页：无（工程内没有原理图页文档）")
     add("- PCB：网表 %d 行，走线网络 %d 个，过孔 %d 个"
@@ -248,6 +272,9 @@ def render_report(artifacts, mismatches, stats, floating):
     if stats.get("duplicate_designators"):
         add("- 另有 %d 个位号在 PCB 上对应多个元件，已排除比对"
             % stats["duplicate_designators"])
+    if stats.get("duplicate_pin_keys"):
+        add("- 另有 %d 个（位号, 引脚号）在 PCB 网表里重复出现，其中 %d 个网络互相矛盾已排除比对"
+            % (stats["duplicate_pin_keys"], stats.get("duplicate_pin_conflicts") or 0))
     if stats.get("multi_page"):
         add("- 另有 %d 个位号出现在多个原理图页，已排除比对"
             % stats["multi_page"])
@@ -321,6 +348,11 @@ def render_report(artifacts, mismatches, stats, floating):
     if stats.get("multi_page"):
         findings.append(("🟠", "%d 个位号出现在多个原理图页" % stats["multi_page"],
                          "多页共用位号通常是未重新编号的副本页，需确认哪一页有效"))
+    if stats.get("duplicate_pin_conflicts"):
+        findings.append(("🟠", "%d 个引脚在 PCB 网表里对应多个网络"
+                         % stats["duplicate_pin_conflicts"],
+                         "同一（位号, 引脚号）有多条网络矛盾的 PAD_NET，"
+                         "需确认焊盘归属后再比对"))
     for w in dict.fromkeys((artifacts.get("pcb_warnings") or [])
                            + (geo.get("warnings") or [])):
         findings.append(("🟡", w, "解析限制，不是设计缺陷"))
@@ -336,6 +368,10 @@ def render_report(artifacts, mismatches, stats, floating):
     else:
         add("- 自动检查未发现问题。这只代表解析层面一致，不等于设计正确。")
     add("")
+    if floating_truncated:
+        add("> 悬空网络清单已截断：**仅列前 %d 条**，完整结果见 `nets.json`，"
+            "未列出的部分同样需要人工核对。" % len(floating))
+        add("")
     add("> 自动检查只覆盖可机械判定的项（网络冲突、悬空、两侧不一致、解析缺项）。"
         "引脚功能、封装选型、电流余量、器件极性等需要对照数据手册逐项核对，"
         "见 `references/review-playbook.md`。")
@@ -354,9 +390,10 @@ def render_report(artifacts, mismatches, stats, floating):
         missing.append("缺少 LAYER_PHYS，叠层与阻抗无法确认")
     if stats["compared"] == 0:
         missing.append("两侧引脚号没有交集，网表一致性未验证")
-    if len(meta["pages"]) > len(pages_ir):
-        missing.append("有 %d 个原理图页未被解析，跨页网络可能不完整"
-                       % (len(meta["pages"]) - len(pages_ir)))
+    if pending_pages:
+        missing.append("有 %d 个原理图页未被解析（%s），跨页网络可能不完整"
+                       % (len(pending_pages),
+                          "、".join(p["name"] for p in pending_pages)))
     if missing:
         for m in missing:
             add("- %s" % m)
@@ -410,8 +447,8 @@ def run_single(project_path, out_dir, page_key=None):
                                artifacts["geometry"]))
 
     mismatches, stats = check_consistency(artifacts)
-    floating = find_floating(artifacts["pages_ir"])
-    report = render_report(artifacts, mismatches, stats, floating)
+    floating, floating_truncated = find_floating(artifacts["pages_ir"])
+    report = render_report(artifacts, mismatches, stats, floating, floating_truncated)
     written.append(_write_text(os.path.join(out_dir, "report.md"), report))
 
     print("工程: %s" % artifacts["meta"]["project"])

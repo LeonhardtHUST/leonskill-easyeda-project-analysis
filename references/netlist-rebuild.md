@@ -130,12 +130,17 @@ COMPONENT.Device → DEVICE 文档 META.attributes.Symbol → SYMBOL 文档 → 
 |---|---|
 | ticket / firstTicket | 全文件重编号 |
 | client / updateTime / version | 换客户端或机器重存 |
-| zIndex / dataType / max | 图层顺序、批处理重编号 |
+| zIndex / dataType | 图层顺序、批处理重编号 |
 | `ELE_PLACEHOLDER` | 保存时的占位元素重编号 |
 | `LAYER_FILL` / `POURED` | 铺铜重灌 |
-| 元件坐标 ±10~20 mil 微调 | 布局微动 |
 
 `epru_diff.strip_volatile()` 递归剔除上表字段；`NOISE_TYPES` 整类跳过。
+
+**不做坐标容差过滤。** 元件坐标 ±10~20 mil 的微调会原样出现在 `changed` 里，
+需要人工分辨是布局微动还是真的挪了位置；只差几个 mil 也算变更，不替用户判定。
+`max` / `min` 这类字段同理不再剔除——它们可能是焊盘的真实几何尺寸，
+剔掉会让"焊盘变小了"这种变更彻底消失。若确实需要按容差判定，
+那属于字段级比较器的增强，另立任务，不要在 diff 里凭阈值猜。
 
 ### 3. 网表级
 

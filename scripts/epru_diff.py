@@ -17,8 +17,11 @@ import pcbnet
 
 VOLATILE_KEYS = {
     "ticket", "firstTicket", "lastTicket", "client", "updateTime", "update_time",
-    "version", "zIndex", "dataType", "max", "min", "checksum", "hash", "revision",
+    "version", "zIndex", "dataType", "checksum", "hash", "revision",
 }
+# 注意 max / min 曾经在剔除名单里，但它们可能是焊盘/铺铜的真实几何字段
+# （包围盒尺寸），剔掉会把真实的焊盘尺寸变更吞进"无变化"。
+# 判定原则：只有确实与设计无关的元数据才能进 VOLATILE_KEYS。
 
 NOISE_TYPES = {
     "ELE_PLACEHOLDER",   # 保存时的批处理重编号
@@ -88,6 +91,11 @@ def diff_records(text_old, text_new):
 
 
 def diff_netlist(rows_old, rows_new):
+    """按 (位号, 焊盘号) 逐行比对网络与引脚映射。
+
+    只比网络会漏掉"符号改版"——焊盘号还是那些，但引到的引脚换了。
+    所以行的语义签名是 (网络, 引脚号, 引脚名)，任一不同都算变更。
+    """
     def index(rows):
         return {(r["designator"], r["pad"]): r for r in rows}
 
@@ -98,10 +106,24 @@ def diff_netlist(rows_old, rows_new):
     for key in b:
         if key not in a:
             continue
-        if (a[key].get("net") or "") != (b[key].get("net") or ""):
-            changed.append({"designator": key[0], "pad": key[1],
-                            "before": a[key].get("net") or "",
-                            "after": b[key].get("net") or ""})
+        ra, rb = a[key], b[key]
+        fields = []
+        if (ra.get("net") or "") != (rb.get("net") or ""):
+            fields.append("net")
+        if str(ra.get("pinNumber")) != str(rb.get("pinNumber")):
+            fields.append("pinNumber")
+        if str(ra.get("pinName")) != str(rb.get("pinName")):
+            fields.append("pinName")
+        if not fields:
+            continue
+        changed.append({
+            "designator": key[0], "pad": key[1],
+            "fields": fields,
+            "before": ra.get("net") or "",
+            "after": rb.get("net") or "",
+            "pin_before": {"number": ra.get("pinNumber"), "name": ra.get("pinName")},
+            "pin_after": {"number": rb.get("pinNumber"), "name": rb.get("pinName")},
+        })
     return {"added": added, "removed": removed, "changed": changed}
 
 
@@ -115,17 +137,15 @@ def compare(old_path, new_path):
         "elements": diff_records(proj_old.epru_text, proj_new.epru_text),
     }
 
-    symbols = {}
+    import library
     docs_old = epru.parse_records(proj_old.epru_text)
     docs_new = epru.parse_records(proj_new.epru_text)
-    import library
-    symbols.update(library.build_symbols(docs_old))
-    symbols.update(library.build_symbols(docs_new))
-    devices = {}
-    devices.update(library.build_devices(docs_old))
-    devices.update(library.build_devices(docs_new))
-    rows_old, _ = pcbnet.build_netlist(docs_old, symbols, devices)
-    rows_new, _ = pcbnet.build_netlist(docs_new, symbols, devices)
+    # 库表必须按版本各自构建：符号/器件在版本间变了（引脚改号、换符号），
+    # 两版就不能共用一张表，否则旧版网表会被新版的符号重算一遍，差异被抹平。
+    symbols_old, symbols_new = library.build_symbols(docs_old), library.build_symbols(docs_new)
+    devices_old, devices_new = library.build_devices(docs_old), library.build_devices(docs_new)
+    rows_old, _ = pcbnet.build_netlist(docs_old, symbols_old, devices_old)
+    rows_new, _ = pcbnet.build_netlist(docs_new, symbols_new, devices_new)
     result["netlist"] = diff_netlist(rows_old, rows_new)
     result["netlist_rows"] = {"old": len(rows_old), "new": len(rows_new)}
     return result
@@ -134,13 +154,15 @@ def compare(old_path, new_path):
 def summarize(result):
     el = result["elements"]
     nl = result["netlist"]
+    pin_only = sum(1 for c in nl["changed"] if "net" not in (c.get("fields") or ["net"]))
+    detail = "（其中 %d 条仅引脚映射变化，网名未变）" % pin_only if pin_only else ""
     return "\n".join([
         "记录数: %d → %d" % (el["records_old"], el["records_new"]),
         "元素级: 新增 %d / 删除 %d / 变更 %d（已过滤噪声 %d）"
         % (len(el["added"]), len(el["removed"]), len(el["changed"]), el["noise_filtered"]),
-        "网表: %d → %d 行；新增 %d / 删除 %d / 换网 %d"
+        "网表: %d → %d 行；新增 %d / 删除 %d / 换网 %d%s"
         % (result["netlist_rows"]["old"], result["netlist_rows"]["new"],
-           len(nl["added"]), len(nl["removed"]), len(nl["changed"])),
+           len(nl["added"]), len(nl["removed"]), len(nl["changed"]), detail),
     ])
 
 

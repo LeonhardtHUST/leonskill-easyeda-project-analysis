@@ -56,15 +56,26 @@ def _component_meta(by_type, devices=None):
         if not symbol_uuid and device_uuid:
             device = devices.get(device_uuid) or {}
             symbol_uuid = (device.get("attributes") or {}).get("Symbol")
+        # 不能用 or 链：x / y / angle 为 0 是合法值（原点上的元件、0 度摆放），
+        # 用 or 会掉到 centerX / rotation 上，读出错位的坐标。
+        x = comp.get("x")
+        if x is None:
+            x = comp.get("centerX")
+        y = comp.get("y")
+        if y is None:
+            y = comp.get("centerY")
+        angle = comp.get("angle")
+        if angle is None:
+            angle = comp.get("rotation")
         out[cid] = {
             "designator": merged.get("Designator"),
             "footprint": merged.get("Footprint"),
             "symbol": symbol_uuid,
             "device": device_uuid,
             "layerId": comp.get("layerId"),
-            "x": comp.get("x") or comp.get("centerX") or 0.0,
-            "y": comp.get("y") or comp.get("centerY") or 0.0,
-            "angle": comp.get("angle") or comp.get("rotation") or 0,
+            "x": 0.0 if x is None else x,
+            "y": 0.0 if y is None else y,
+            "angle": 0 if angle is None else angle,
         }
     return out
 
@@ -179,7 +190,11 @@ def _poly_points(payload):
 
 
 def build_geometry(docs):
-    """返回几何字典。所有长度同时给原始 mil 与换算后的 mm。"""
+    """返回几何字典。所有长度同时给原始 mil 与换算后的 mm。
+
+    工程可能有多个 PCB 文档，走线/过孔/铜层计数必须跨文档累加：
+    放在循环内会被后一个文档覆盖，只剩最后一个文档的数据。
+    """
     geo = {
         "unit": "mil",
         "outline": None,
@@ -190,6 +205,9 @@ def build_geometry(docs):
         "pads": 0,
         "warnings": [],
     }
+    used_layers = set()
+    net_len = {}
+    via_sizes = {}
     for doc in pcb_docs(docs):
         by_type, _meta = epru.doc_elements(doc)
 
@@ -203,8 +221,6 @@ def build_geometry(docs):
                     "name": layer.get("layerName"),
                 })
 
-        used_layers = set()
-        net_len = {}
         for _lid, line in by_type.get("LINE", []):
             if not isinstance(line, dict):
                 continue
@@ -212,8 +228,7 @@ def build_geometry(docs):
             x1, y1 = float(line.get("startX") or 0.0), float(line.get("startY") or 0.0)
             x2, y2 = float(line.get("endX") or 0.0), float(line.get("endY") or 0.0)
             length = math.hypot(x2 - x1, y2 - y1)
-            layer_id = line.get("layerId")
-            used_layers.add(layer_id)
+            used_layers.add(line.get("layerId"))
             entry = net_len.setdefault(net, {"net": net, "segments": 0, "length_mil": 0.0,
                                              "widths": {}})
             entry["segments"] += 1
@@ -222,15 +237,6 @@ def build_geometry(docs):
             if width is not None:
                 entry["widths"][str(width)] = entry["widths"].get(str(width), 0) + 1
 
-        for net, entry in net_len.items():
-            widths = entry.pop("widths")
-            entry["width_mil_mode"] = _mode(widths)
-            entry["length_mm"] = round(entry["length_mil"] * MIL_TO_MM, 2)
-            entry["length_mil"] = round(entry["length_mil"], 2)
-            geo["traces"].append(entry)
-        geo["traces"].sort(key=lambda t: -t["length_mil"])
-
-        via_sizes = {}
         for _vid, via in by_type.get("VIA", []):
             if not isinstance(via, dict):
                 continue
@@ -244,7 +250,6 @@ def build_geometry(docs):
                 "diameter": via.get("viaDiameter"),
                 "type": via.get("viaType"),
             })
-        geo["via_hole_histogram"] = dict(sorted(via_sizes.items(), key=lambda kv: -kv[1]))
 
         points = []
         for _pid, poly in by_type.get("POLY", []):
@@ -271,10 +276,21 @@ def build_geometry(docs):
         if not phys:
             geo["warnings"].append("没有 LAYER_PHYS 记录，叠层无法确认")
 
-        copper = [l for l in geo["layers"] if (l.get("type") or "").upper() in COPPER_TYPES]
-        used = [l for l in copper if l.get("id") in used_layers]
-        geo["copper_layers_used"] = len(used)
-        geo["copper_layers_declared"] = len(copper)
+    # ---- 跨文档汇总：这里只算一次，避免多 PCB 文档互相覆盖 ----
+    for net, entry in net_len.items():
+        widths = entry.pop("widths")
+        entry["width_mil_mode"] = _mode(widths)
+        entry["length_mm"] = round(entry["length_mil"] * MIL_TO_MM, 2)
+        entry["length_mil"] = round(entry["length_mil"], 2)
+        geo["traces"].append(entry)
+    geo["traces"].sort(key=lambda t: -t["length_mil"])
+
+    geo["via_hole_histogram"] = dict(sorted(via_sizes.items(), key=lambda kv: -kv[1]))
+
+    copper = [l for l in geo["layers"] if (l.get("type") or "").upper() in COPPER_TYPES]
+    used = [l for l in copper if l.get("id") in used_layers]
+    geo["copper_layers_used"] = len(used)
+    geo["copper_layers_declared"] = len(copper)
 
     return geo
 

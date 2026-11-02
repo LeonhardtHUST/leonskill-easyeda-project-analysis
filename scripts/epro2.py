@@ -75,27 +75,36 @@ def open_project(path):
     if not zipfile.is_zipfile(path):
         raise ProjectError("ZIP 结构损坏，无法读取目录")
 
-    with zipfile.ZipFile(path) as zf:
-        members = []
-        epru_info = None
-        for info in zf.infolist():
-            name = decode_member_name(info.filename)
-            members.append({"name": name, "size": info.file_size})
-            if name.lower().endswith(".epru") and epru_info is None:
-                epru_info = info
-        if epru_info is None:
-            raise ProjectError("ZIP 内没有 .epru 工程日志："
-                               "不是嘉立创EDA专业版工程，或文件不完整")
-        raw = zf.read(epru_info)
-        text = raw.decode("utf-8", "replace")
-        meta = {}
-        for info in zf.infolist():
-            if decode_member_name(info.filename) == "project2.json":
-                try:
-                    meta = json.loads(zf.read(info).decode("utf-8", "replace"))
-                except (UnicodeDecodeError, ValueError):
-                    meta = {}
-                break
+    try:
+        with zipfile.ZipFile(path) as zf:
+            members = []
+            epru_info = None
+            for info in zf.infolist():
+                name = decode_member_name(info.filename)
+                members.append({"name": name, "size": info.file_size})
+                if name.lower().endswith(".epru") and epru_info is None:
+                    epru_info = info
+            if epru_info is None:
+                raise ProjectError("ZIP 内没有 .epru 工程日志："
+                                   "不是嘉立创EDA专业版工程，或文件不完整")
+            raw = zf.read(epru_info)
+            text = raw.decode("utf-8", "replace")
+            meta = {}
+            for info in zf.infolist():
+                if decode_member_name(info.filename) == "project2.json":
+                    try:
+                        meta = json.loads(zf.read(info).decode("utf-8", "replace"))
+                    except (UnicodeDecodeError, ValueError):
+                        meta = {}
+                    break
+    except zipfile.BadZipFile as exc:
+        # 中央目录能读、成员读不出来（传输截断 / 写入中断）时走到这里。
+        # 转成 ProjectError，让调用方按"主动报错不出半成品"处理。
+        raise ProjectError("ZIP 数据损坏，解压失败（%s）：文件可能在传输或保存时被截断，"
+                           "请在 EDA 里重新导出 .epro2" % exc)
+    except NotImplementedError as exc:
+        raise ProjectError("ZIP 用了不支持的压缩方式（%s）："
+                           "请用 Python 3.8+ 与标准库解压" % exc)
 
     return Project(path, decode_member_name(epru_info.filename), text, meta, members)
 
