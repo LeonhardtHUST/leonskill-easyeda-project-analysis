@@ -68,7 +68,11 @@ def build_devices(docs):
 
 
 def build_footprints(docs):
-    """{uuid: {pads[{num, x, y}], title}}，坐标为封装本地坐标。"""
+    """{uuid: {pads[{num, x, y, layer_id, w, h}], title}}，坐标为封装本地坐标。
+
+    layer_id 是封装内焊盘所在层（12 = MULTI，通孔焊盘）；消费方拿不到层的
+    时候要回退到元件所在层，不能一律当成顶层。
+    """
     footprints = {}
     for doc in epru.docs_of(docs, "FOOTPRINT"):
         by_type, meta = epru.doc_elements(doc)
@@ -76,10 +80,14 @@ def build_footprints(docs):
         for _pid, pad in by_type.get("PAD", []):
             if not isinstance(pad, dict):
                 continue
+            default = pad.get("defaultPad") or {}
             pads.append({
                 "num": _text(pad.get("num") or pad.get("number") or pad.get("padNumber")),
                 "x": _num(pad.get("centerX"), pad.get("x")),
                 "y": _num(pad.get("centerY"), pad.get("y")),
+                "layer_id": int(_num(pad.get("layerId")) or 12),
+                "w": _num(default.get("width")),
+                "h": _num(default.get("height")),
             })
         footprints[doc["uuid"]] = {"pads": pads, "title": meta.get("title") or ""}
     return footprints

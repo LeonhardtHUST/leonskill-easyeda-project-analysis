@@ -157,6 +157,15 @@ def _natural(text):
     return (prefix, int(digits) if digits else -1)
 
 
+def _rotate(x, y, deg):
+    """封装本地坐标 → 元件坐标系。PCB 的 angle 是逆时针正方向（实测）。"""
+    if not deg:
+        return x, y
+    theta = math.radians(deg)
+    cos_t, sin_t = math.cos(theta), math.sin(theta)
+    return x * cos_t - y * sin_t, x * sin_t + y * cos_t
+
+
 def _poly_points(payload):
     """板框路径 → [(x, y)]。支持 ["R",x,y,w,h,rot,r] 与点序列两种写法。"""
     path = payload.get("path") or payload.get("points") or payload.get("polygon")
@@ -201,6 +210,10 @@ def build_geometry(docs):
     工程可能有多个 PCB 文档（多板工程），走线/过孔/铜层计数必须跨文档累加：
     放在循环内会被后一个文档覆盖，只剩最后一个文档的数据。
     板框则逐板记在 `outlines` 里，`outline` 给所有板框的并集范围。
+
+    `segments` 与 `pads` 是**逐图元**的原始记录（不做拓扑归并），供下游
+    寄生提参 / 全波 coupon 之类需要端点坐标的消费者使用；`traces` 仍是
+    按网络汇总的统计口径，两者不要混用。
     """
     geo = {
         "unit": "mil",
@@ -209,10 +222,12 @@ def build_geometry(docs):
         "layers": [],
         "stackup": [],
         "traces": [],
+        "segments": [],
         "vias": [],
-        "pads": 0,
+        "pads": [],
         "warnings": [],
     }
+    footprints = library.build_footprints(docs)
     used_layers = set()
     net_len = {}
     via_sizes = {}
@@ -245,6 +260,15 @@ def build_geometry(docs):
             width = line.get("width")
             if width is not None:
                 entry["widths"][str(width)] = entry["widths"].get(str(width), 0) + 1
+            # 逐段原始记录：端点保留 mil，下游自己换算
+            if length > 0:
+                geo["segments"].append({
+                    "net": net,
+                    "layer_id": line.get("layerId"),
+                    "x1": round(x1, 3), "y1": round(y1, 3),
+                    "x2": round(x2, 3), "y2": round(y2, 3),
+                    "width": width,
+                })
 
         for _vid, via in by_type.get("VIA", []):
             if not isinstance(via, dict):
@@ -259,6 +283,34 @@ def build_geometry(docs):
                 "diameter": via.get("viaDiameter"),
                 "type": via.get("viaType"),
             })
+
+        # 焊盘绝对坐标 = 元件坐标 + 旋转后的封装本地坐标。
+        # 只保留有位号的元件：无位号的是删除残留，它们的焊盘不是当前设计。
+        comps = _component_meta(by_type)
+        pad_nets = pad_net_map(doc)
+        for comp_id, comp in comps.items():
+            designator = comp.get("designator")
+            if not designator:
+                continue
+            footprint = footprints.get(comp.get("footprint") or "") or {}
+            for pad in footprint.get("pads") or []:
+                num = str(pad.get("num"))
+                ax, ay = _rotate(pad["x"], pad["y"], comp.get("angle") or 0.0)
+                layer_id = pad.get("layer_id") or 12
+                if int(layer_id) == 12:            # MULTI = 通孔盘，落在元件所在层
+                    layer_id = comp.get("layerId") or 1
+                hit = pad_nets.get((comp_id, num))
+                geo["pads"].append({
+                    "component": designator,
+                    "pin": num,
+                    "net": (hit[1].get("net") if hit else None) or "",
+                    "x": round(comp.get("x") + ax, 3),
+                    "y": round(comp.get("y") + ay, 3),
+                    "layer_id": int(layer_id),
+                    "w": pad.get("w"),
+                    "h": pad.get("h"),
+                })
+                used_layers.add(int(layer_id))
 
         points = []
         for _pid, poly in by_type.get("POLY", []):
@@ -330,6 +382,8 @@ def build_geometry(docs):
     used = [l for l in copper if l.get("id") in used_layers]
     geo["copper_layers_used"] = len(used)
     geo["copper_layers_declared"] = len(copper)
+    geo["segment_count"] = len(geo["segments"])
+    geo["pad_count"] = len(geo["pads"])
 
     return geo
 

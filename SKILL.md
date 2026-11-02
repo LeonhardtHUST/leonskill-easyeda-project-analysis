@@ -1,7 +1,7 @@
 ---
 name: leonskill-easyeda-project-analysis
 description: 解析并分析嘉立创EDA专业版（EasyEDA Pro / 立创EDA专业版）工程文件 .epro2 与 .epru：解包 ZIP 容器、还原逐行编辑记录流、按 ticket 归约出当前状态、重建原理图与 PCB 两侧权威网表、提取 PCB 几何（走线/过孔/焊盘/板框/叠层/铺铜）、逐脚比对两侧网表、对比两版工程语义差异，并输出可追溯到具体记录的 P0/P1/P2 分级报告。当用户提供 .epro2 或 .epru 文件，或提出“解析这个工程”“网表对不对”“原理图检查”“PCB 走线叠层看看”“打样前帮我审一下”“这版改了什么”“DRC 过了是不是就没问题”时使用。触发词：epro2、epru、立创EDA专业版、嘉立创EDA、EDA工程文件、工程解析、网表重建、引脚核对、焊盘映射、PCB几何、走线、过孔、叠层、板框、铺铜、丝印、版本对比、增量审查、DRC复核、打样检查、BOM核对。
-version: 1.2.0
+version: 1.3.0
 agent_created: true
 license: MIT
 ---
@@ -57,7 +57,7 @@ python3 "$SKILL_DIR/scripts/epro2.py" design.epro2 --list
 | `schematic_<页>.json` | 每页一份 IR：元件、引脚绝对坐标、导线、网络 |
 | `nets.json` | 各页网络 → 引脚成员表，含命名来源与冲突 |
 | `pcb_netlist.csv` | PCB 侧权威网表：位号, 焊盘号, 引脚号, 引脚名, 网络 |
-| `pcb_geometry.json` | 板框尺寸、层定义、叠层、走线（网络/层/长度/线宽）、过孔 |
+| `pcb_geometry.json` | 板框尺寸、层定义、叠层、按网络汇总的走线（网络/层/总长/线宽众数）、过孔；另有逐图元 `segments`（每段端点/层/线宽）与 `pads`（位号/焊盘号/网络/绝对坐标/层），供下游寄生提参与全波建模使用 |
 | `diff.json` | 两版语义差异：added / removed / changed + 噪声过滤结果 |
 | `report.md` | 人类可读报告（固定模板，见 §6） |
 
@@ -70,10 +70,10 @@ python3 "$SKILL_DIR/scripts/epro2.py" design.epro2 --list
 cd "$SKILL_DIR" && python3 -m unittest discover -s tests -v
 ```
 
-33 个测试用例覆盖容器解码、ticket 归约、残留元件剔除、焊盘号→引脚号映射、
+36 个测试用例覆盖容器解码、ticket 归约、残留元件剔除、焊盘号→引脚号映射、
 旋转/镜像坐标变换、导线连通性与空间分桶（含 1000 引脚 × 2000 线段的性能冒烟）、
-板框路径解析、板框/过孔/叠层换算、多 PCB 文档累加、两版 diff（含符号引脚改版、
-焊盘几何字段）与端到端产物。改动脚本后先跑一遍。
+板框路径解析、板框/过孔/叠层换算、多 PCB 文档累加、逐段走线与焊盘绝对坐标、
+两版 diff（含符号引脚改版、焊盘几何字段）与端到端产物。改动脚本后先跑一遍。
 
 `tests/make_fixture.py` 能按需生成变体工程（符号引脚互换、双 PCB 文档、同名页、
 焊盘 max 字段），加回归用例时优先扩展它，不要手搓 .epro2。

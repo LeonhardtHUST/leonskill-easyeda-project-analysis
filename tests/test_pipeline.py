@@ -193,6 +193,34 @@ class TestGeometry(FixtureCase):
         self.assertEqual(len(geo["vias"]), 1)
         self.assertEqual(geo["stackup"][0]["raw"]["er"], 4.4)
 
+    def test_segments_keep_endpoints(self):
+        """聚合后的 traces 只有总长，下游提参/EM 需要逐段端点。"""
+        geo = pcbnet.build_geometry(self.docs)
+        self.assertEqual(geo["segment_count"], 1)
+        seg = geo["segments"][0]
+        self.assertEqual((seg["net"], seg["layer_id"]), ("VCC", 1))
+        self.assertEqual((seg["x1"], seg["y1"], seg["x2"], seg["y2"]),
+                         (0.0, 0.0, 1000.0, 0.0))
+        self.assertEqual(seg["width"], 10)
+
+    def test_pads_have_absolute_coordinates_and_net(self):
+        """焊盘要能落到 (位号, 焊盘号, 网络, 层)，且不能被残留元件污染。"""
+        geo = pcbnet.build_geometry(self.docs)
+        pads = {(p["component"], p["pin"]): p for p in geo["pads"]}
+        self.assertEqual(set(pads), {("R1", "1"), ("R1", "2")})
+        self.assertEqual((pads[("R1", "1")]["x"], pads[("R1", "1")]["y"]), (-30.0, 0.0))
+        self.assertEqual((pads[("R1", "2")]["x"], pads[("R1", "2")]["y"]), (30.0, 0.0))
+        self.assertEqual(pads[("R1", "1")]["net"], "GND")
+        # 同一焊盘有两条 PAD_NET，必须取 ticket 最大的一条（旧记录是空网络）
+        self.assertEqual(pads[("R1", "2")]["net"], "VCC")
+        # MULTI(12) 通孔盘落到元件所在层
+        self.assertEqual(pads[("R1", "1")]["layer_id"], 1)
+
+    def test_pad_rotation_is_applied(self):
+        x, y = pcbnet._rotate(30, 0, 90)
+        self.assertAlmostEqual(x, 0.0, places=9)
+        self.assertAlmostEqual(y, 30.0, places=9)
+
 
 class TestPolyPoints(unittest.TestCase):
     def test_rect_tail_is_not_a_point(self):

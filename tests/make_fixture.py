@@ -139,6 +139,7 @@ def build_epru(net_for_pad2="VCC", swap_pins=False, two_pcb=False,
     lines.append(_rec("COMPONENT", "pc1", 1, {"x": 0, "y": 0, "angle": 0, "layerId": 1}))
     lines.append(_rec("ATTR", "b1", 1, {"parentId": "pc1", "key": "Designator", "value": "R1"}))
     lines.append(_rec("ATTR", "b2", 1, {"parentId": "pc1", "key": "Device", "value": "d1"}))
+    lines.append(_rec("ATTR", "b3", 1, {"parentId": "pc1", "key": "Footprint", "value": "f1"}))
     lines.append(_rec("PAD_NET", ["PAD_NET", "pc1", "1", "pd1"], 10, {"padNet": "GND"}))
     lines.append(_rec("PAD_NET", ["PAD_NET", "pc1", "2", "pd2"], 5, {"padNet": ""}))
     lines.append(_rec("PAD_NET", ["PAD_NET", "pc1", "2", "pd2"], 20,
