@@ -1,0 +1,136 @@
+{
+  "schema_version": "1",
+  "capabilities": [
+    "container-unpack",
+    "record-reduction",
+    "schematic-netlist",
+    "pcb-netlist",
+    "pcb-geometry",
+    "netlist-crosscheck",
+    "version-diff",
+    "report-render"
+  ],
+  "dependencies": [
+    {
+      "id": "python-runtime",
+      "type": "runtime",
+      "required": true,
+      "auth_type": "none",
+      "capabilities": [
+        "container-unpack",
+        "record-reduction",
+        "schematic-netlist",
+        "pcb-netlist",
+        "pcb-geometry",
+        "netlist-crosscheck",
+        "version-diff",
+        "report-render"
+      ],
+      "checks": [
+        {
+          "id": "python-version",
+          "type": "python",
+          "name": "python-version",
+          "required": true,
+          "min_version": "3.8"
+        }
+      ],
+      "setup": {
+        "official_home_url": "https://www.python.org/",
+        "official_docs_url": "https://docs.python.org/3/",
+        "download_url": "https://www.python.org/downloads/",
+        "steps": [
+          "安装 Python 3.8 或更高版本",
+          "确认 python3 --version（Windows 上可能是 python --version）不低于 3.8",
+          "不需要 pip 安装任何包：scripts/ 只依赖标准库（zipfile/json/math/csv/re/argparse）"
+        ],
+        "verify": "python3 --version；然后 python3 scripts/analyze.py --help 能打印用法",
+        "security": "不需要凭据；脚本无网络、无子进程，只读输入工程、只写 --out 目录",
+        "verified_at": "2026-11-02",
+        "applies_to_version": "Python 3.8 及以上"
+      }
+    }
+  ],
+  "functional_degradations": [
+    {
+      "capability": "container-unpack",
+      "trigger": "输入不是 ZIP 容器，或成员名不是 GBK 编码",
+      "fallback": "报容器格式错误并列出实际可读成员，不猜测成员语义",
+      "user_input": "重新从 EDA 导出的 .epro2",
+      "limitations": "非 4.1.x 生成的工程成员布局可能不同，解析可能不完整",
+      "evidence_label": "已验证",
+      "recovery": "换用 EDA 正常导出的工程文件重跑",
+      "stop_condition": "多次解包失败且用户无法提供新的导出文件"
+    },
+    {
+      "capability": "record-reduction",
+      "trigger": ".epru 记录流里出现未知记录类型",
+      "fallback": "跳过未知记录，并在报告里标注跳过了多少条、哪些 ticket 受影响",
+      "user_input": "",
+      "limitations": "未知记录可能影响网表或几何完整性",
+      "evidence_label": "部分验证",
+      "recovery": "补充该记录类型的归约规则后重跑",
+      "stop_condition": "关键 ticket 全部由未知记录构成，归约结果为空"
+    },
+    {
+      "capability": "schematic-netlist",
+      "trigger": "页面缺少符号引脚坐标，或导线记录不完整",
+      "fallback": "输出已识别的元件与引脚，把网络标为不完整，不推断连接",
+      "user_input": "",
+      "limitations": "网表不完整时不能据此判断电路正确性",
+      "evidence_label": "已验证",
+      "recovery": "重新导出工程或换页重跑",
+      "stop_condition": "连续多页都缺引脚坐标"
+    },
+    {
+      "capability": "pcb-netlist",
+      "trigger": "PCB 记录缺少焊盘或网络映射",
+      "fallback": "输出位号与焊盘清单，网络列留空并标注「需核实」",
+      "user_input": "",
+      "limitations": "无法完成两侧逐脚比对",
+      "evidence_label": "已验证",
+      "recovery": "确认该工程 PCB 已生成网络后重跑",
+      "stop_condition": "PCB 侧完全没有焊盘记录"
+    },
+    {
+      "capability": "pcb-geometry",
+      "trigger": "缺少叠层或走线记录",
+      "fallback": "只输出可得的板框、层与元件坐标，缺的部分明确标注",
+      "user_input": "",
+      "limitations": "拿不到走线长度与过孔孔径分布",
+      "evidence_label": "已验证",
+      "recovery": "换用包含完整 PCB 数据的工程重跑",
+      "stop_condition": "板框都取不到"
+    },
+    {
+      "capability": "netlist-crosscheck",
+      "trigger": "任一侧网表不完整",
+      "fallback": "只比对可比对的部分，不一致项标为「待核实」而非直接判错",
+      "user_input": "",
+      "limitations": "覆盖率下降，结论不能作为打样依据",
+      "evidence_label": "已验证",
+      "recovery": "先修复上游网表完整性问题再重跑",
+      "stop_condition": "两侧都没有可用网表"
+    },
+    {
+      "capability": "version-diff",
+      "trigger": "两版工程记录结构不同，或版本跨度大到 ticket 无法对齐",
+      "fallback": "输出原始记录差异清单，不做语义归类，交由用户判断",
+      "user_input": "两版工程的来源与改动意图",
+      "limitations": "无法过滤保存噪声，差异条目会明显偏多",
+      "evidence_label": "部分验证",
+      "recovery": "提供同版本 EDA 导出的两版工程后重跑",
+      "stop_condition": "两版来自不同客户端大版本且结构完全不兼容"
+    },
+    {
+      "capability": "report-render",
+      "trigger": "--out 目录不可写",
+      "fallback": "把报告正文打到 stdout，产物 JSON 留在临时目录并打印路径",
+      "user_input": "可写的输出目录",
+      "limitations": "没有落盘的 report.md 与 csv",
+      "evidence_label": "已验证",
+      "recovery": "换可写目录重跑",
+      "stop_condition": "用户无法提供任何可写目录"
+    }
+  ]
+}

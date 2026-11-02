@@ -77,6 +77,7 @@ python3 -m unittest discover -s tests -v
 
 ```
 SKILL.md                          技能主体
+skill-dependencies.json           能力声明、依赖与降级映射（机器可读）
 references/container-and-records  容器与记录流格式
 references/netlist-rebuild        网表重建、diff、噪声过滤
 references/pcb-geometry           PCB 几何与单位陷阱
