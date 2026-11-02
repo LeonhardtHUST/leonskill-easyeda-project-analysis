@@ -322,8 +322,9 @@ def build_geometry(docs):
         }
         if len(outline_boxes) > 1:
             geo["warnings"].append(
-                "工程含 %d 个 PCB 文档（多板），上面给的是各板框并集尺寸，"
-                "逐板尺寸见 outlines" % len(outline_boxes))
+                "工程含 %d 个 PCB 文档（多板）：板框给的是各板并集尺寸"
+                "（逐板尺寸见 outlines），走线与过孔按网络名跨板合并，未按板拆分"
+                % len(outline_boxes))
 
     copper = [l for l in geo["layers"] if (l.get("type") or "").upper() in COPPER_TYPES]
     used = [l for l in copper if l.get("id") in used_layers]
