@@ -174,6 +174,12 @@ def _poly_points(payload):
                 return points
             points.extend([(x, y), (x + w, y), (x + w, y + h), (x, y + h)])
             i += 5
+            # R 形式末尾跟着 rotation 与 radius 两个数字，它们不是坐标点。
+            # 不跳过的话，任何不落在原点的矩形都会凭空多出一个点，
+            # 包围盒被撑到 (0,0)～角点，板框尺寸能差出一个数量级。
+            if i + 2 == len(path) and all(
+                    isinstance(v, (int, float)) for v in path[i:i + 2]):
+                i += 2
             continue
         if isinstance(item, (int, float)) and i + 1 < len(path) and \
                 isinstance(path[i + 1], (int, float)):
@@ -192,12 +198,14 @@ def _poly_points(payload):
 def build_geometry(docs):
     """返回几何字典。所有长度同时给原始 mil 与换算后的 mm。
 
-    工程可能有多个 PCB 文档，走线/过孔/铜层计数必须跨文档累加：
+    工程可能有多个 PCB 文档（多板工程），走线/过孔/铜层计数必须跨文档累加：
     放在循环内会被后一个文档覆盖，只剩最后一个文档的数据。
+    板框则逐板记在 `outlines` 里，`outline` 给所有板框的并集范围。
     """
     geo = {
         "unit": "mil",
         "outline": None,
+        "outlines": [],
         "layers": [],
         "stackup": [],
         "traces": [],
@@ -208,6 +216,7 @@ def build_geometry(docs):
     used_layers = set()
     net_len = {}
     via_sizes = {}
+    outline_boxes = []
     for doc in pcb_docs(docs):
         by_type, _meta = epru.doc_elements(doc)
 
@@ -262,21 +271,30 @@ def build_geometry(docs):
             ys = [p[1] for p in points]
             width_mil = max(xs) - min(xs)
             height_mil = max(ys) - min(ys)
-            geo["outline"] = {
+            box = {
+                "min_x": min(xs), "max_x": max(xs),
+                "min_y": min(ys), "max_y": max(ys),
                 "width_mil": round(width_mil, 2),
                 "height_mil": round(height_mil, 2),
                 "width_mm": round(width_mil * MIL_TO_MM, 2),
                 "height_mm": round(height_mil * MIL_TO_MM, 2),
             }
+            outline_boxes.append(box)
+            listed = {k: box[k] for k in ("width_mil", "height_mil",
+                                          "width_mm", "height_mm")}
+            listed["doc"] = doc["uuid"]
+            geo["outlines"].append(listed)
 
         phys = by_type.get("LAYER_PHYS", [])
         for rid, rec in phys:
             if isinstance(rec, dict):
                 geo["stackup"].append({"id": _as_id(rid), "raw": rec})
-        if not phys:
-            geo["warnings"].append("没有 LAYER_PHYS 记录，叠层无法确认")
 
     # ---- 跨文档汇总：这里只算一次，避免多 PCB 文档互相覆盖 ----
+    if not geo["stackup"]:
+        # 叠层通常是工程级信息，某个 PCB 文档里没写不等于拿不到
+        geo["warnings"].append("没有 LAYER_PHYS 记录，叠层无法确认")
+
     for net, entry in net_len.items():
         widths = entry.pop("widths")
         entry["width_mil_mode"] = _mode(widths)
@@ -286,6 +304,26 @@ def build_geometry(docs):
     geo["traces"].sort(key=lambda t: -t["length_mil"])
 
     geo["via_hole_histogram"] = dict(sorted(via_sizes.items(), key=lambda kv: -kv[1]))
+
+    if outline_boxes:
+        min_x = min(b["min_x"] for b in outline_boxes)
+        max_x = max(b["max_x"] for b in outline_boxes)
+        min_y = min(b["min_y"] for b in outline_boxes)
+        max_y = max(b["max_y"] for b in outline_boxes)
+        width_mil, height_mil = max_x - min_x, max_y - min_y
+        # 单板时这就是唯一那块板的尺寸；多板时是各板框的并集范围，
+        # 逐板尺寸看 outlines，报告里也会逐板列一行。
+        geo["outline"] = {
+            "width_mil": round(width_mil, 2),
+            "height_mil": round(height_mil, 2),
+            "width_mm": round(width_mil * MIL_TO_MM, 2),
+            "height_mm": round(height_mil * MIL_TO_MM, 2),
+            "boards": len(outline_boxes),
+        }
+        if len(outline_boxes) > 1:
+            geo["warnings"].append(
+                "工程含 %d 个 PCB 文档（多板），上面给的是各板框并集尺寸，"
+                "逐板尺寸见 outlines" % len(outline_boxes))
 
     copper = [l for l in geo["layers"] if (l.get("type") or "").upper() in COPPER_TYPES]
     used = [l for l in copper if l.get("id") in used_layers]

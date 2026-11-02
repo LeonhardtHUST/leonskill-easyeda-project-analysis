@@ -194,6 +194,25 @@ class TestGeometry(FixtureCase):
         self.assertEqual(geo["stackup"][0]["raw"]["er"], 4.4)
 
 
+class TestPolyPoints(unittest.TestCase):
+    def test_rect_tail_is_not_a_point(self):
+        """R 形式末尾的 rotation / radius 不是坐标点，不能算进包围盒。"""
+        pts = pcbnet._poly_points({"path": ["R", 2000, 0, 500, 500, 0, 0]})
+        self.assertEqual(len(pts), 4)
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        self.assertEqual((min(xs), max(xs)), (2000.0, 2500.0))
+        self.assertEqual((min(ys), max(ys)), (0.0, 500.0))
+
+    def test_negative_size_uses_bbox(self):
+        """w/h 为负表示反方向画，包围盒要按端点算，不能直接相加。"""
+        pts = pcbnet._poly_points({"path": ["R", 1000, 500, -1000, -500, 0, 0]})
+        xs = sorted(p[0] for p in pts)
+        ys = sorted(p[1] for p in pts)
+        self.assertEqual((xs[0], xs[-1]), (0.0, 1000.0))
+        self.assertEqual((ys[0], ys[-1]), (0.0, 500.0))
+
+
 class TestMultiPcbDocument(unittest.TestCase):
     def test_geometry_accumulates_across_docs(self):
         """两个 PCB 文档：过孔孔径分布要合并，铜层引用数要取并集。"""
@@ -214,6 +233,14 @@ class TestMultiPcbDocument(unittest.TestCase):
             nets = {t["net"]: t for t in geo["traces"]}
             self.assertEqual(set(nets), {"VCC", "GND"})
             self.assertAlmostEqual(nets["GND"]["length_mm"], 12.7, places=2)
+            # 板框：逐板各一条，outline 给并集（板1 0..1000mil，板2 2000..2500mil）
+            self.assertEqual(len(geo["outlines"]), 2)
+            self.assertEqual(geo["outline"]["boards"], 2)
+            self.assertAlmostEqual(geo["outlines"][0]["width_mm"], 25.4, places=2)
+            self.assertAlmostEqual(geo["outlines"][1]["width_mm"], 12.7, places=2)
+            self.assertAlmostEqual(geo["outline"]["width_mm"], 63.5, places=2)
+            self.assertAlmostEqual(geo["outline"]["height_mm"], 12.7, places=2)
+            self.assertTrue(any("多板" in w for w in geo["warnings"]))
 
 
 class TestBadZipBody(unittest.TestCase):
@@ -309,6 +336,18 @@ class TestDiff(unittest.TestCase):
             self.assertEqual(by_pad["1"]["pin_after"]["name"], "2")
             self.assertEqual(by_pad["2"]["pin_before"]["name"], "2")
             self.assertEqual(by_pad["2"]["pin_after"]["name"], "1")
+
+
+class TestPlacement(unittest.TestCase):
+    def test_placement_of_normalizes_mirror_key(self):
+        """记录用 isMirror、变换函数读 mirror：归一必须两种写法都认，缺省不镜像。"""
+        placement_of = analyze.library.placement_of
+        p = placement_of({"x": 1, "y": 2, "rotation": 90, "isMirror": True})
+        self.assertEqual((p["x"], p["y"], p["rotation"]), (1, 2, 90))
+        self.assertTrue(p["mirror"])
+        self.assertTrue(placement_of({"mirror": True})["mirror"])
+        self.assertFalse(placement_of({"x": 0, "y": 0})["mirror"])
+        self.assertFalse(placement_of(None)["mirror"])
 
 
 class TestBuildNetsSemantics(unittest.TestCase):

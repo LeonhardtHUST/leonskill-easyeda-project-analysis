@@ -298,7 +298,14 @@ def render_report(artifacts, mismatches, stats, floating, floating_truncated=Fal
     add("")
     if geo.get("outline"):
         o = geo["outline"]
-        add("- 板框：%.2f × %.2f mm" % (o["width_mm"], o["height_mm"]))
+        if (o.get("boards") or 1) > 1:
+            add("- 板框：%d 块板，并集 %.2f × %.2f mm"
+                % (o["boards"], o["width_mm"], o["height_mm"]))
+            for i, board in enumerate(geo.get("outlines") or [], 1):
+                add("  - 板 %d（`%s`）：%.2f × %.2f mm"
+                    % (i, board.get("doc"), board["width_mm"], board["height_mm"]))
+        else:
+            add("- 板框：%.2f × %.2f mm" % (o["width_mm"], o["height_mm"]))
     else:
         add("- 板框：**数据缺失**（未找到 BOARD_OUTLINE 记录）")
     add("- 铜层：声明 %d 条，被实际引用 %d 条"

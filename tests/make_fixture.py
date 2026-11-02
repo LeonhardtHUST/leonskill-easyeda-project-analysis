@@ -177,7 +177,8 @@ def build_epru(net_for_pad2="VCC", swap_pins=False, two_pcb=False,
         }))
         lines.append(_rec("POLY", "o2", 4, {
             "layerId": 11, "polyType": "BOARD_OUTLINE",
-            "path": ["R", 0, 0, 1000, 500, 0, 0],
+            # 第二块板小且错开：用于验证"逐板尺寸"与"并集尺寸"是两回事
+            "path": ["R", 2000, 0, 500, 500, 0, 0],
         }))
     return "\n".join(lines) + "\n"
 

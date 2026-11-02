@@ -106,7 +106,12 @@ def _text(value):
 
 
 def transform_pin(px, py, component):
-    """符号本地坐标 → 元件绝对坐标（文件坐标系，y 尚未取负）。"""
+    """符号本地坐标 → 元件绝对坐标（文件坐标系，y 尚未取负）。
+
+    `component` 需要是 `placement_of()` 归一后的摆放字典
+    （键：x / y / rotation / mirror）。直接传原始 COMPONENT 记录也能跑，
+    但记录的镜像字段叫 `isMirror`、这里读的是 `mirror`，不归一就会静默丢掉镜像。
+    """
     theta = math.radians((component.get("rotation") or 0) * ROT_SIGN)
     cos_t, sin_t = math.cos(theta), math.sin(theta)
     x = px * cos_t - py * sin_t
@@ -114,6 +119,25 @@ def transform_pin(px, py, component):
     if component.get("mirror"):
         x = -x
     return x + (component.get("x") or 0.0), y + (component.get("y") or 0.0)
+
+
+def placement_of(record):
+    """COMPONENT 记录 → 摆放字典，只做字段名归一，不改数值。
+
+    记录里是 `isMirror`，变换函数按约定读 `mirror`。这层映射集中在这里，
+    调用方不必各自记住哪边是哪个名字；两个名字都认，缺省按未镜像处理。
+    """
+    if not isinstance(record, dict):
+        return {"x": 0.0, "y": 0.0, "rotation": 0, "mirror": False}
+    mirror = record.get("isMirror")
+    if mirror is None:
+        mirror = record.get("mirror")
+    return {
+        "x": record.get("x"),
+        "y": record.get("y"),
+        "rotation": record.get("rotation"),
+        "mirror": bool(mirror),
+    }
 
 
 def component_type(symbol, device):

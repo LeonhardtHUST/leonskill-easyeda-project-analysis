@@ -191,15 +191,10 @@ def page_to_ir(doc, symbols, devices, project=None, page_name=None):
             "pins": [],
             "attrs": {k: v for k, v in merged.items() if v is not None},
         }
-        # 记录里的摆放字段叫 isMirror / rotation / x / y，transform_pin 按文档约定
-        # 读 mirror，这里做一次显式归一。此前直接把原始记录传进去，
-        # 镜像分支因为读不到 mirror 从未生效（rotation=90+镜像的件会被当成没镜像）。
-        placement = {
-            "x": comp.get("x"),
-            "y": comp.get("y"),
-            "rotation": comp.get("rotation"),
-            "mirror": comp.get("isMirror"),
-        }
+        # 记录的摆放字段名（isMirror）与变换函数的入参名（mirror）不同，
+        # 归一集中由 library.placement_of() 负责；不归一镜像分支就读不到，
+        # 旋转+镜像的元件会被当成没镜像（引脚左右颠倒）。
+        placement = library.placement_of(comp)
         for _pid, pin in (symbol.get("pins") or {}).items():
             ax, ay = library.transform_pin(pin["x"], pin["y"], placement)
             item["pins"].append({
