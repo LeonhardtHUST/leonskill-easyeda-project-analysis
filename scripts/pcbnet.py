@@ -332,7 +332,10 @@ def build_geometry(docs):
                 "height_mm": round(height_mil * MIL_TO_MM, 2),
             }
             outline_boxes.append(box)
-            listed = {k: box[k] for k in ("width_mil", "height_mil",
+            # 逐板框既要宽高，也要绝对范围：下游按 min/max 算板级 extent，
+            # 只给宽高它没法定位（只能退回用走线范围冒充板框）。
+            listed = {k: box[k] for k in ("min_x", "max_x", "min_y", "max_y",
+                                          "width_mil", "height_mil",
                                           "width_mm", "height_mm")}
             listed["doc"] = doc["uuid"]
             geo["outlines"].append(listed)
@@ -366,6 +369,8 @@ def build_geometry(docs):
         # 单板时这就是唯一那块板的尺寸；多板时是各板框的并集范围，
         # 逐板尺寸看 outlines，报告里也会逐板列一行。
         geo["outline"] = {
+            "min_x": min_x, "max_x": max_x,
+            "min_y": min_y, "max_y": max_y,
             "width_mil": round(width_mil, 2),
             "height_mil": round(height_mil, 2),
             "width_mm": round(width_mil * MIL_TO_MM, 2),

@@ -1,9 +1,10 @@
 ---
 name: leonskill-easyeda-project-analysis
 description: 解析并分析嘉立创EDA专业版（EasyEDA Pro / 立创EDA专业版）工程文件 .epro2 与 .epru：解包 ZIP 容器、还原逐行编辑记录流、按 ticket 归约出当前状态、重建原理图与 PCB 两侧权威网表、提取 PCB 几何（走线/过孔/焊盘/板框/叠层/铺铜）、逐脚比对两侧网表、对比两版工程语义差异，并输出可追溯到具体记录的 P0/P1/P2 分级报告。当用户提供 .epro2 或 .epru 文件，或提出“解析这个工程”“网表对不对”“原理图检查”“PCB 走线叠层看看”“打样前帮我审一下”“这版改了什么”“DRC 过了是不是就没问题”时使用。触发词：epro2、epru、立创EDA专业版、嘉立创EDA、EDA工程文件、工程解析、网表重建、引脚核对、焊盘映射、PCB几何、走线、过孔、叠层、板框、铺铜、丝印、版本对比、增量审查、DRC复核、打样检查、BOM核对。
-version: 1.3.0
+version: 1.3.1
 agent_created: true
 license: MIT
+compatibility: Python 3.8+；只依赖标准库；无网络、无子进程；产物契约见 references/output-contract.md
 ---
 
 # 嘉立创EDA专业版工程文件解析

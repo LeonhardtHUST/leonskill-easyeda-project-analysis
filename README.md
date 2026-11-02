@@ -78,6 +78,7 @@ python3 -m unittest discover -s tests -v
 ```
 SKILL.md                          技能主体
 skill-dependencies.json           能力声明、依赖与降级映射（机器可读）
+references/output-contract.md     产物契约：schematic_*.json / pcb_geometry.json 的字段承诺
 references/container-and-records  容器与记录流格式
 references/netlist-rebuild        网表重建、diff、噪声过滤
 references/pcb-geometry           PCB 几何与单位陷阱
@@ -85,6 +86,9 @@ references/review-playbook        分级、引脚核对、BOM 对齐
 scripts/                          epro2 / epru / library / schematic / pcbnet / epru_diff / analyze
 tests/                            合成工程 + 端到端断言
 ```
+
+产物被 `leonskill-easyeda-ngspice-sim` 消费，字段承诺与变更流程见
+[`references/output-contract.md`](references/output-contract.md)。
 
 ## 限制
 
