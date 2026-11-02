@@ -1,0 +1,29 @@
+# 解析产物（运行 analyze.py 生成）
+eda-out/
+eda-diff/
+out/
+
+# 真实工程数据：绝不入库
+*.epro2
+*.epru
+*.epro/
+*.epro2.bak
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# WorkBuddy / 助手工作区产物
+.workbuddy/
+*.genie
+*.log
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
