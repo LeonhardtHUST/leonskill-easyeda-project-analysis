@@ -45,9 +45,23 @@ python3 "$SKILL_DIR/scripts/analyze.py" --diff old.epro2 new.epro2 --out ./eda-d
 
 ## 安装到 WorkBuddy
 
+仓库根就是技能根（`SKILL.md` 在顶层），仓库名与技能目录名完全一致，直接 clone 进技能目录：
+
 ```bash
-cp -r . ~/.workbuddy/skills/leonskill-easyeda-project-analysis
+cd ~/.workbuddy/skills
+git clone https://github.com/LeonhardtHUST/leonskill-easyeda-project-analysis.git
 ```
+
+得到 `~/.workbuddy/skills/leonskill-easyeda-project-analysis/`，重启会话即可。升级：
+
+```bash
+cd ~/.workbuddy/skills/leonskill-easyeda-project-analysis && git pull
+```
+
+**目录名必须是 `leonskill-easyeda-project-analysis`**：`easyeda-ngspice-sim` 的离线入口按这个路径查找依赖
+（`scripts/analysis_dep.py` 的候选路径之一），改名会让它报 `DEPENDENCY_MISSING`。
+
+不要用 `cp -r . <目标>` 安装：会把 `.git/`、`.workbuddy/`（本机会话记录）一起拷进技能目录。
 
 之后交给助手一个 `.epro2`，说"解析这个工程"即可触发。
 
